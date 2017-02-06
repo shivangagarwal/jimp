@@ -1,6 +1,8 @@
-if (process.env.ENVIRONMENT !== "BROWSER") var FS = require("fs");
+if (process.env.ENVIRONMENT == "BROWSER") window.Buffer = require('buffer');
+else var FS = require("fs");
 var PNG = require("pngjs").PNG;
 var JPEG = require("jpeg-js");
+var JGD = require("./src/jgd");
 var BMP = require("bmp-js");
 var MIME = require("mime");
 var TinyColor = require("tinycolor2");
@@ -97,6 +99,12 @@ function throwError(error, cb) {
  */
 
 /**
+ * Jimp constructor (from a JGD object)
+ * @param data a JGD object containing the image data
+ * @param cb a function to call when the image is parsed to a bitmap
+ */
+
+/**
  * Jimp constructor (from a Buffer)
  * @param data a Buffer containing the image data
  * @param cb a function to call when the image is parsed to a bitmap
@@ -133,7 +141,7 @@ function Jimp() {
             height: h
         };
 
-        for (let i = 0; i < this.bitmap.data.length; i=i+4) {
+        for (let i = 0; i < this.bitmap.data.length; i+=4) {
             this.bitmap.data.writeUInt32BE(this._background, i);
         }
 
@@ -200,20 +208,31 @@ function Jimp() {
                 parseBitmap.call(that, data, mime, cb);
             });
         });
-    } else if ("object" == typeof arguments[0]) {
+    } else if ("object" == typeof arguments[0] && Buffer.isBuffer(arguments[0])) {
         // read from a buffer
         var data = arguments[0];
         var mime = getMIMEFromBuffer(data);
         cb = arguments[1];
 
-        if (!Buffer.isBuffer(data))
-            return throwError.call(this, "data must be a Buffer", cb);
         if ("string" != typeof mime)
             return throwError.call(this, "mime must be a string", cb);
         if ("function" != typeof cb)
             return throwError.call(this, "cb must be a function", cb);
 
         parseBitmap.call(this, data, mime, cb);
+    } else if ("object" == typeof arguments[0]) {
+        // read from JGD object
+        var jgd = arguments[0];
+        cb = arguments[1] || noop;
+
+        if ("function" != typeof cb)
+            return throwError.call(this, "cb must be a function", cb);
+        if (!("number" == typeof jgd.width &&
+              "number" == typeof jgd.height &&
+              "number" == typeof jgd.data.length))
+            return throwError.call(this, "data must have a JGD structure", cb);
+
+        parseBitmap.call(this, jgd, "image/jgd", cb);
     } else {
         return throwError.call(this, "No matching constructor overloading was found. Please see the docs for how to call the Jimp constructor.", cb);
     }
@@ -302,6 +321,10 @@ function parseBitmap(data, mime, cb) {
         this.bitmap = BMP.decode(data);
         return cb.call(this, null, this);
 
+    case Jimp.MIME_JGD:
+        this.bitmap = JGD.decode(data);
+        return cb.call(this, null, this);
+
     default:
         return throwError.call(this, "Unsupported MIME type: " + mime, cb);
     }
@@ -355,6 +378,7 @@ Jimp.AUTO = -1;
 // supported mime types
 Jimp.MIME_PNG = "image/png";
 Jimp.MIME_JPEG = "image/jpeg";
+Jimp.MIME_JGD = "image/jgd";
 Jimp.MIME_BMP = "image/bmp";
 
 // PNG filter types
@@ -2141,6 +2165,30 @@ Jimp.prototype.getBuffer = function (mime, cb) {
     return this;
 };
 
+/**
+ * Converts the image to a JGD object (sync fashion)
+ * @returns JGD object
+ */
+Jimp.prototype.getJGDSync = function () {
+    return JGD.encode(this.bitmap);
+};
+
+/**
+ * Converts the image to a JGD object (async fashion)
+ * @param cb a Node-style function to call with the buffer as the second argument
+ * @returns this for chaining of methods
+ */
+Jimp.prototype.getJGD = function (cb) {
+    var jgd, error;
+    try {
+        jgd = this.getJGDSync();
+    } catch(err) {
+        error = err;
+    }
+    cb(error, jgd);
+    return this;
+};
+
 function compositeBitmapOverBackground(image){
     return (new Jimp(image.bitmap.width, image.bitmap.height, image._background)).composite(image, 0, 0).bitmap;
 }
@@ -2431,6 +2479,7 @@ if (process.env.ENVIRONMENT === "BROWSER") {
 
     gl.Jimp = Jimp;
     gl.Buffer = Buffer;
-} else {
-    module.exports = Jimp;
+    require("browser/src/jimp-wrapper.js");
 }
+
+module.exports = Jimp;
